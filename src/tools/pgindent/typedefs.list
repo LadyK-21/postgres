@@ -1056,6 +1056,7 @@ GrantRoleStmt
 GrantStmt
 GrantTargetType
 Group
+GroupByOrdering
 GroupClause
 GroupPath
 GroupPathExtraData
@@ -2067,7 +2068,6 @@ PathClauseUsage
 PathCostComparison
 PathHashStack
 PathKey
-PathKeyInfo
 PathKeysComparison
 PathTarget
 PatternInfo
@@ -2717,7 +2717,6 @@ SplitPoint
 SplitTextOutputData
 SplitVar
 StackElem
-StandbySlotNamesConfigData
 StartDataPtrType
 StartLOPtrType
 StartLOsPtrType
@@ -2782,6 +2781,7 @@ SyncRepConfigData
 SyncRepStandbyData
 SyncRequestHandler
 SyncRequestType
+SyncStandbySlotsConfigData
 SyncingTablesState
 SysFKRelationship
 SysScanDesc
@@ -3099,9 +3099,9 @@ WaitEvent
 WaitEventActivity
 WaitEventBufferPin
 WaitEventClient
-WaitEventExtensionCounterData
-WaitEventExtensionEntryById
-WaitEventExtensionEntryByName
+WaitEventCustomCounterData
+WaitEventCustomEntryByInfo
+WaitEventCustomEntryByName
 WaitEventIO
 WaitEventIPC
 WaitEventSet
@@ -3717,6 +3717,7 @@ pg_unicode_normprops
 pg_unicode_properties
 pg_unicode_range
 pg_unicode_recompinfo
+pg_usec_time_t
 pg_utf_to_local_combined
 pg_uuid_t
 pg_wc_probefunc
@@ -3930,6 +3931,7 @@ string
 substitute_actual_parameters_context
 substitute_actual_srf_parameters_context
 substitute_phv_relids_context
+subxids_array_status
 symbol
 tablespaceinfo
 td_entry
