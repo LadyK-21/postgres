@@ -104,6 +104,7 @@ use File::Path qw(rmtree mkpath);
 use File::Spec;
 use File::stat qw(stat);
 use File::Temp ();
+use IO::Socket::INET;
 use IPC::Run;
 use PostgreSQL::Version;
 use PostgreSQL::Test::RecursiveCopy;
@@ -175,6 +176,11 @@ INIT
 	$portdir =~ s!\\!/!g;
 	# Make sure the directory exists
 	mkpath($portdir) unless -d $portdir;
+
+	#
+	# Signal handlers
+	#
+	$SIG{TERM} = $SIG{INT} = sub { die "death by signal"; };
 }
 
 =pod
@@ -282,6 +288,82 @@ sub connstr
 	$dbname =~ s#\'#\\\'#g;
 
 	return "port=$pgport host=$pghost dbname='$dbname'";
+}
+
+=pod
+
+=item $node->raw_connect()
+
+Open a raw TCP or Unix domain socket connection to the server. This is
+used by low-level protocol and connection limit tests.
+
+=cut
+
+sub raw_connect
+{
+	my ($self) = @_;
+	my $pgport = $self->port;
+	my $pghost = $self->host;
+
+	my $socket;
+	if ($PostgreSQL::Test::Utils::use_unix_sockets)
+	{
+		require IO::Socket::UNIX;
+		my $path = "$pghost/.s.PGSQL.$pgport";
+
+		$socket = IO::Socket::UNIX->new(
+			Type => SOCK_STREAM(),
+			Peer => $path,
+		) or die "Cannot create socket - $IO::Socket::errstr\n";
+	}
+	else
+	{
+		$socket = IO::Socket::INET->new(
+			PeerHost => $pghost,
+			PeerPort => $pgport,
+			Proto => 'tcp'
+		) or die "Cannot create socket - $IO::Socket::errstr\n";
+	}
+	return $socket;
+}
+
+=pod
+
+=item $node->raw_connect_works()
+
+Check if raw_connect() function works on this platform. This should
+be called to SKIP any tests that require raw_connect().
+
+This tries to connect to the server, to test whether it works or not,,
+so the server is up and running. Otherwise this can return 0 even if
+there's nothing wrong with raw_connect() itself.
+
+Notably, raw_connect() does not work on Unix domain sockets on
+Strawberry perl 5.26.3.1 on Windows, which we use in Cirrus CI images
+as of this writing. It dies with "not implemented on this
+architecture".
+
+=cut
+
+sub raw_connect_works
+{
+	my ($self) = @_;
+
+	# If we're using Unix domain sockets, we need a working
+	# IO::Socket::UNIX implementation.
+	if ($PostgreSQL::Test::Utils::use_unix_sockets)
+	{
+		eval {
+			my $sock = $self->raw_connect();
+			$sock->close();
+		};
+		if ($@ =~ /not implemented/)
+		{
+			diag "IO::Socket::UNIX does not work: $@";
+			return 0;
+		}
+	}
+	return 1
 }
 
 =pod
@@ -2181,6 +2263,11 @@ returned.  Set B<on_error_stop> to 0 to ignore errors instead.
 Set a timeout for a background psql session. By default, timeout of
 $PostgreSQL::Test::Utils::timeout_default is set up.
 
+=item connstr => B<value>
+
+If set, use this as the connection string for the connection to the
+backend.
+
 =item replication => B<value>
 
 If set, add B<replication=value> to the conninfo string.
@@ -2204,14 +2291,21 @@ sub background_psql
 	my $replication = $params{replication};
 	my $timeout = undef;
 
+	# Build the connection string.
+	my $psql_connstr;
+	if (defined $params{connstr})
+	{
+		$psql_connstr = $params{connstr};
+	}
+	else
+	{
+		$psql_connstr = $self->connstr($dbname);
+	}
+	$psql_connstr .= defined $replication ? " replication=$replication" : "";
+
 	my @psql_params = (
 		$self->installed_command('psql'),
-		'-XAtq',
-		'-d',
-		$self->connstr($dbname)
-		  . (defined $replication ? " replication=$replication" : ""),
-		'-f',
-		'-');
+		'-XAtq', '-d', $psql_connstr, '-f', '-');
 
 	$params{on_error_stop} = 1 unless defined $params{on_error_stop};
 	$timeout = $params{timeout} if defined $params{timeout};
@@ -2837,6 +2931,28 @@ sub lsn
 
 =pod
 
+=item $node->check_extension(extension_name)
+
+Scan pg_available_extensions to check that an extension is available in an
+installation.
+
+Returns 1 if the extension is available, 0 otherwise.
+
+=cut
+
+sub check_extension
+{
+	my ($self, $extension_name) = @_;
+
+	my $result = $self->safe_psql('postgres',
+		"SELECT count(*) > 0 FROM pg_available_extensions WHERE name = '$extension_name';"
+	);
+
+	return $result eq 't' ? 1 : 0;
+}
+
+=pod
+
 =item $node->wait_for_event(wait_event_name, backend_type)
 
 Poll pg_stat_activity until backend_type reaches wait_event_name.
@@ -3315,13 +3431,6 @@ sub corrupt_page_checksum
 
 	return;
 }
-
-#
-# Signal handlers
-#
-$SIG{TERM} = $SIG{INT} = sub {
-	die "death by signal";
-};
 
 =pod
 

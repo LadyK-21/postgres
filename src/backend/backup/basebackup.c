@@ -36,6 +36,7 @@
 #include "port.h"
 #include "postmaster/syslogger.h"
 #include "postmaster/walsummarizer.h"
+#include "replication/slot.h"
 #include "replication/walsender.h"
 #include "replication/walsender_private.h"
 #include "storage/bufpage.h"
@@ -161,7 +162,7 @@ static const char *const excludeDirContents[] =
 	 * even if the intention is to restore to another primary. See backup.sgml
 	 * for a more detailed description.
 	 */
-	"pg_replslot",
+	PG_REPLSLOT_DIR,
 
 	/* Contents removed on startup, see dsm_cleanup_for_mmap(). */
 	PG_DYNSHMEM_DIR,
@@ -249,8 +250,10 @@ perform_base_backup(basebackup_options *opt, bbsink *sink,
 	state.bytes_total_is_valid = false;
 
 	/* we're going to use a BufFile, so we need a ResourceOwner */
-	Assert(CurrentResourceOwner == NULL);
-	CurrentResourceOwner = ResourceOwnerCreate(NULL, "base backup");
+	Assert(AuxProcessResourceOwner != NULL);
+	Assert(CurrentResourceOwner == AuxProcessResourceOwner ||
+		   CurrentResourceOwner == NULL);
+	CurrentResourceOwner = AuxProcessResourceOwner;
 
 	backup_started_in_recovery = RecoveryInProgress();
 
@@ -671,7 +674,7 @@ perform_base_backup(basebackup_options *opt, bbsink *sink,
 	FreeBackupManifest(&manifest);
 
 	/* clean up the resource owner we created */
-	WalSndResourceCleanup(true);
+	ReleaseAuxProcessResources(true);
 
 	basebackup_progress_done();
 }
@@ -1487,7 +1490,7 @@ sendDir(bbsink *sink, const char *path, int basepathlen, bool sizeonly,
 				if (OidIsValid(spcoid))
 				{
 					relspcoid = spcoid;
-					lookup_path = psprintf("pg_tblspc/%u/%s", spcoid,
+					lookup_path = psprintf("%s/%u/%s", PG_TBLSPC_DIR, spcoid,
 										   tarfilename);
 				}
 				else

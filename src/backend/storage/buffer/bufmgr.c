@@ -136,33 +136,6 @@ typedef struct SMgrSortArray
 	SMgrRelation srel;
 } SMgrSortArray;
 
-/*
- * Helper struct for read stream object used in
- * RelationCopyStorageUsingBuffer() function.
- */
-struct copy_storage_using_buffer_read_stream_private
-{
-	BlockNumber blocknum;
-	BlockNumber nblocks;
-};
-
-/*
- * Callback function to get next block for read stream object used in
- * RelationCopyStorageUsingBuffer() function.
- */
-static BlockNumber
-copy_storage_using_buffer_read_stream_next_block(ReadStream *stream,
-												 void *callback_private_data,
-												 void *per_buffer_data)
-{
-	struct copy_storage_using_buffer_read_stream_private *p = callback_private_data;
-
-	if (p->blocknum < p->nblocks)
-		return p->blocknum++;
-
-	return InvalidBlockNumber;
-}
-
 /* GUC variables */
 bool		zero_damaged_pages = false;
 int			bgwriter_lru_maxpages = 100;
@@ -1286,6 +1259,7 @@ StartReadBuffersImpl(ReadBuffersOperation *operation,
 {
 	int			actual_nblocks = *nblocks;
 	int			io_buffers_len = 0;
+	int			maxcombine = 0;
 
 	Assert(*nblocks > 0);
 	Assert(*nblocks <= MAX_IO_COMBINE_LIMIT);
@@ -1317,6 +1291,23 @@ StartReadBuffersImpl(ReadBuffersOperation *operation,
 		{
 			/* Extend the readable range to cover this block. */
 			io_buffers_len++;
+
+			/*
+			 * Check how many blocks we can cover with the same IO. The smgr
+			 * implementation might e.g. be limited due to a segment boundary.
+			 */
+			if (i == 0 && actual_nblocks > 1)
+			{
+				maxcombine = smgrmaxcombine(operation->smgr,
+											operation->forknum,
+											blockNum);
+				if (unlikely(maxcombine < actual_nblocks))
+				{
+					elog(DEBUG2, "limiting nblocks at %u from %u to %u",
+						 blockNum, actual_nblocks, maxcombine);
+					actual_nblocks = maxcombine;
+				}
+			}
 		}
 	}
 	*nblocks = actual_nblocks;
@@ -3582,7 +3573,7 @@ AtEOXact_Buffers(bool isCommit)
  * buffer pool.
  */
 void
-InitBufferPoolAccess(void)
+InitBufferManagerAccess(void)
 {
 	HASHCTL		hash_ctl;
 
@@ -4710,7 +4701,7 @@ RelationCopyStorageUsingBuffer(RelFileLocator srclocator,
 	PGIOAlignedBlock buf;
 	BufferAccessStrategy bstrategy_src;
 	BufferAccessStrategy bstrategy_dst;
-	struct copy_storage_using_buffer_read_stream_private p;
+	BlockRangeReadStreamPrivate p;
 	ReadStream *src_stream;
 	SMgrRelation src_smgr;
 
@@ -4741,16 +4732,16 @@ RelationCopyStorageUsingBuffer(RelFileLocator srclocator,
 	bstrategy_src = GetAccessStrategy(BAS_BULKREAD);
 	bstrategy_dst = GetAccessStrategy(BAS_BULKWRITE);
 
-	/* Initalize streaming read */
-	p.blocknum = 0;
-	p.nblocks = nblocks;
+	/* Initialize streaming read */
+	p.current_blocknum = 0;
+	p.last_exclusive = nblocks;
 	src_smgr = smgropen(srclocator, INVALID_PROC_NUMBER);
 	src_stream = read_stream_begin_smgr_relation(READ_STREAM_FULL,
 												 bstrategy_src,
 												 src_smgr,
 												 permanent ? RELPERSISTENCE_PERMANENT : RELPERSISTENCE_UNLOGGED,
 												 forkNum,
-												 copy_storage_using_buffer_read_stream_next_block,
+												 block_range_read_stream_cb,
 												 &p,
 												 0);
 
@@ -5926,7 +5917,12 @@ ScheduleBufferTagForWriteback(WritebackContext *wb_context, IOContext io_context
 {
 	PendingWriteback *pending;
 
-	if (io_direct_flags & IO_DIRECT_DATA)
+	/*
+	 * As pg_flush_data() doesn't do anything with fsync disabled, there's no
+	 * point in tracking in that case.
+	 */
+	if (io_direct_flags & IO_DIRECT_DATA ||
+		!enableFsync)
 		return;
 
 	/*

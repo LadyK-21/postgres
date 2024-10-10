@@ -726,6 +726,10 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 		{
 			RelOptInfo *rel = root->simple_rel_array[i];
 
+			/* ignore the RTE_GROUP RTE */
+			if (i == root->group_rtindex)
+				continue;
+
 			if (rel == NULL)	/* must be an outer join */
 			{
 				Assert(bms_is_member(i, root->outer_join_rels));
@@ -1087,6 +1091,10 @@ generate_base_implied_equalities(PlannerInfo *root)
 		{
 			RelOptInfo *rel = root->simple_rel_array[i];
 
+			/* ignore the RTE_GROUP RTE */
+			if (i == root->group_rtindex)
+				continue;
+
 			if (rel == NULL)	/* must be an outer join */
 			{
 				Assert(bms_is_member(i, root->outer_join_rels));
@@ -1285,7 +1293,8 @@ generate_base_implied_equalities_no_const(PlannerInfo *root,
 	 * For the moment we force all the Vars to be available at all join nodes
 	 * for this eclass.  Perhaps this could be improved by doing some
 	 * pre-analysis of which members we prefer to join, but it's no worse than
-	 * what happened in the pre-8.3 code.
+	 * what happened in the pre-8.3 code.  (Note: rebuild_eclass_attr_needed
+	 * needs to match this code.)
 	 */
 	foreach(lc, ec->ec_members)
 	{
@@ -2415,6 +2424,44 @@ reconsider_full_join_clause(PlannerInfo *root, OuterJoinClauseInfo *ojcinfo)
 }
 
 /*
+ * rebuild_eclass_attr_needed
+ *	  Put back attr_needed bits for Vars/PHVs needed for join eclasses.
+ *
+ * This is used to rebuild attr_needed/ph_needed sets after removal of a
+ * useless outer join.  It should match what
+ * generate_base_implied_equalities_no_const did, except that we call
+ * add_vars_to_attr_needed not add_vars_to_targetlist.
+ */
+void
+rebuild_eclass_attr_needed(PlannerInfo *root)
+{
+	ListCell   *lc;
+
+	foreach(lc, root->eq_classes)
+	{
+		EquivalenceClass *ec = (EquivalenceClass *) lfirst(lc);
+
+		/* Need do anything only for a multi-member, no-const EC. */
+		if (list_length(ec->ec_members) > 1 && !ec->ec_has_const)
+		{
+			ListCell   *lc2;
+
+			foreach(lc2, ec->ec_members)
+			{
+				EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc2);
+				List	   *vars = pull_var_clause((Node *) cur_em->em_expr,
+												   PVC_RECURSE_AGGREGATES |
+												   PVC_RECURSE_WINDOWFUNCS |
+												   PVC_INCLUDE_PLACEHOLDERS);
+
+				add_vars_to_attr_needed(root, vars, ec->ec_relids);
+				list_free(vars);
+			}
+		}
+	}
+}
+
+/*
  * find_join_domain
  *	  Find the highest JoinDomain enclosed within the given relid set.
  *
@@ -3353,6 +3400,10 @@ get_eclass_indexes_for_relids(PlannerInfo *root, Relids relids)
 	while ((i = bms_next_member(relids, i)) > 0)
 	{
 		RelOptInfo *rel = root->simple_rel_array[i];
+
+		/* ignore the RTE_GROUP RTE */
+		if (i == root->group_rtindex)
+			continue;
 
 		if (rel == NULL)		/* must be an outer join */
 		{

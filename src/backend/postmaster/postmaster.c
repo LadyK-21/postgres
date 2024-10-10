@@ -904,6 +904,11 @@ PostmasterMain(int argc, char *argv[])
 	InitializeMaxBackends();
 
 	/*
+	 * Calculate the size of the PGPROC fast-path lock arrays.
+	 */
+	InitializeFastPathLocks();
+
+	/*
 	 * Give preloaded libraries a chance to request additional shared memory.
 	 */
 	process_shmem_requests();
@@ -2628,7 +2633,8 @@ CleanupBackend(Backend *bp,
 		BackgroundWorkerStopNotifications(bp->pid);
 
 	/*
-	 * If it was a background worker, also update its RegisteredWorker entry.
+	 * If it was a background worker, also update its RegisteredBgWorker
+	 * entry.
 	 */
 	if (bp->bkend_type == BACKEND_TYPE_BGWORKER)
 	{

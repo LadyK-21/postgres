@@ -4290,8 +4290,6 @@ getPublications(Archive *fout)
 
 	query = createPQExpBuffer();
 
-	resetPQExpBuffer(query);
-
 	/* Get the publications. */
 	if (fout->remoteVersion >= 130000)
 		appendPQExpBufferStr(query,
@@ -4315,6 +4313,9 @@ getPublications(Archive *fout)
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
 
 	ntups = PQntuples(res);
+
+	if (ntups == 0)
+		goto cleanup;
 
 	i_tableoid = PQfnumber(res, "tableoid");
 	i_oid = PQfnumber(res, "oid");
@@ -4354,6 +4355,8 @@ getPublications(Archive *fout)
 		/* Decide whether we want to dump it */
 		selectDumpableObject(&(pubinfo[i].dobj), fout);
 	}
+
+cleanup:
 	PQclear(res);
 
 	destroyPQExpBuffer(query);
@@ -5412,23 +5415,18 @@ binary_upgrade_set_type_oids_by_type_oid(Archive *fout,
 	Oid			pg_type_array_oid;
 	Oid			pg_type_multirange_oid;
 	Oid			pg_type_multirange_array_oid;
+	TypeInfo   *tinfo;
 
 	appendPQExpBufferStr(upgrade_buffer, "\n-- For binary upgrade, must preserve pg_type oid\n");
 	appendPQExpBuffer(upgrade_buffer,
 					  "SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('%u'::pg_catalog.oid);\n\n",
 					  pg_type_oid);
 
-	appendPQExpBuffer(upgrade_query,
-					  "SELECT typarray "
-					  "FROM pg_catalog.pg_type "
-					  "WHERE oid = '%u'::pg_catalog.oid;",
-					  pg_type_oid);
-
-	res = ExecuteSqlQueryForSingleRow(fout, upgrade_query->data);
-
-	pg_type_array_oid = atooid(PQgetvalue(res, 0, PQfnumber(res, "typarray")));
-
-	PQclear(res);
+	tinfo = findTypeByOid(pg_type_oid);
+	if (tinfo)
+		pg_type_array_oid = tinfo->typarray;
+	else
+		pg_type_array_oid = InvalidOid;
 
 	if (!OidIsValid(pg_type_array_oid) && force_array_type)
 		pg_type_array_oid = get_next_possible_free_pg_type_oid(fout, upgrade_query);
@@ -5824,7 +5822,7 @@ getExtensions(Archive *fout, int *numExtensions)
 	int			ntups;
 	int			i;
 	PQExpBuffer query;
-	ExtensionInfo *extinfo;
+	ExtensionInfo *extinfo = NULL;
 	int			i_tableoid;
 	int			i_oid;
 	int			i_extname;
@@ -5844,6 +5842,8 @@ getExtensions(Archive *fout, int *numExtensions)
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
 
 	ntups = PQntuples(res);
+	if (ntups == 0)
+		goto cleanup;
 
 	extinfo = (ExtensionInfo *) pg_malloc(ntups * sizeof(ExtensionInfo));
 
@@ -5873,6 +5873,7 @@ getExtensions(Archive *fout, int *numExtensions)
 		selectDumpableExtension(&(extinfo[i]), dopt);
 	}
 
+cleanup:
 	PQclear(res);
 	destroyPQExpBuffer(query);
 
@@ -5910,6 +5911,7 @@ getTypes(Archive *fout)
 	int			i_typtype;
 	int			i_typisdefined;
 	int			i_isarray;
+	int			i_typarray;
 
 	/*
 	 * we include even the built-in types because those may be used as array
@@ -5930,7 +5932,7 @@ getTypes(Archive *fout)
 						 "typnamespace, typacl, "
 						 "acldefault('T', typowner) AS acldefault, "
 						 "typowner, "
-						 "typelem, typrelid, "
+						 "typelem, typrelid, typarray, "
 						 "CASE WHEN typrelid = 0 THEN ' '::\"char\" "
 						 "ELSE (SELECT relkind FROM pg_class WHERE oid = typrelid) END AS typrelkind, "
 						 "typtype, typisdefined, "
@@ -5957,6 +5959,7 @@ getTypes(Archive *fout)
 	i_typtype = PQfnumber(res, "typtype");
 	i_typisdefined = PQfnumber(res, "typisdefined");
 	i_isarray = PQfnumber(res, "isarray");
+	i_typarray = PQfnumber(res, "typarray");
 
 	for (i = 0; i < ntups; i++)
 	{
@@ -5988,6 +5991,8 @@ getTypes(Archive *fout)
 			tyinfo[i].isArray = true;
 		else
 			tyinfo[i].isArray = false;
+
+		tyinfo[i].typarray = atooid(PQgetvalue(res, i, i_typarray));
 
 		if (tyinfo[i].typtype == TYPTYPE_MULTIRANGE)
 			tyinfo[i].isMultirange = true;
@@ -7413,6 +7418,7 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 				i_conname,
 				i_condeferrable,
 				i_condeferred,
+				i_conperiod,
 				i_contableoid,
 				i_conoid,
 				i_condef,
@@ -7494,10 +7500,17 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 
 	if (fout->remoteVersion >= 150000)
 		appendPQExpBufferStr(query,
-							 "i.indnullsnotdistinct ");
+							 "i.indnullsnotdistinct, ");
 	else
 		appendPQExpBufferStr(query,
-							 "false AS indnullsnotdistinct ");
+							 "false AS indnullsnotdistinct, ");
+
+	if (fout->remoteVersion >= 180000)
+		appendPQExpBufferStr(query,
+							 "c.conperiod ");
+	else
+		appendPQExpBufferStr(query,
+							 "NULL AS conperiod ");
 
 	/*
 	 * The point of the messy-looking outer join is to find a constraint that
@@ -7565,6 +7578,7 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 	i_conname = PQfnumber(res, "conname");
 	i_condeferrable = PQfnumber(res, "condeferrable");
 	i_condeferred = PQfnumber(res, "condeferred");
+	i_conperiod = PQfnumber(res, "conperiod");
 	i_contableoid = PQfnumber(res, "contableoid");
 	i_conoid = PQfnumber(res, "conoid");
 	i_condef = PQfnumber(res, "condef");
@@ -7672,6 +7686,7 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 				constrinfo->conindex = indxinfo[j].dobj.dumpId;
 				constrinfo->condeferrable = *(PQgetvalue(res, j, i_condeferrable)) == 't';
 				constrinfo->condeferred = *(PQgetvalue(res, j, i_condeferred)) == 't';
+				constrinfo->conperiod = *(PQgetvalue(res, j, i_conperiod)) == 't';
 				constrinfo->conislocal = true;
 				constrinfo->separate = true;
 
@@ -15900,8 +15915,13 @@ dumpTableSchema(Archive *fout, const TableInfo *tbinfo)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 tbinfo->dobj.catId.oid);
 
+		/*
+		 * PostgreSQL 18 has disabled UNLOGGED for partitioned tables, so
+		 * ignore it when dumping if it was set in this case.
+		 */
 		appendPQExpBuffer(q, "CREATE %s%s %s",
-						  tbinfo->relpersistence == RELPERSISTENCE_UNLOGGED ?
+						  (tbinfo->relpersistence == RELPERSISTENCE_UNLOGGED &&
+						   tbinfo->relkind != RELKIND_PARTITIONED_TABLE) ?
 						  "UNLOGGED " : "",
 						  reltypename,
 						  qualrelname);
@@ -17103,6 +17123,8 @@ dumpConstraint(Archive *fout, const ConstraintInfo *coninfo)
 								  (k == 0) ? "" : ", ",
 								  fmtId(attname));
 			}
+			if (coninfo->conperiod)
+				appendPQExpBufferStr(q, " WITHOUT OVERLAPS");
 
 			if (indxinfo->indnkeyattrs < indxinfo->indnattrs)
 				appendPQExpBufferStr(q, ") INCLUDE (");
@@ -17381,7 +17403,7 @@ collectSequences(Archive *fout)
 	 * versions, but for now it seems unlikely to be worth it.
 	 *
 	 * Since version 18, we can gather the sequence data in this query with
-	 * pg_sequence_read_tuple(), but we only do so for non-schema-only dumps.
+	 * pg_get_sequence_data(), but we only do so for non-schema-only dumps.
 	 */
 	if (fout->remoteVersion < 100000)
 		return;
@@ -17401,7 +17423,7 @@ collectSequences(Archive *fout)
 			"seqcache, seqcycle, "
 			"last_value, is_called "
 			"FROM pg_catalog.pg_sequence, "
-			"pg_sequence_read_tuple(seqrelid) "
+			"pg_get_sequence_data(seqrelid) "
 			"ORDER BY seqrelid;";
 
 	res = ExecuteSqlQuery(fout, query, PGRES_TUPLES_OK);
@@ -17557,6 +17579,15 @@ dumpSequence(Archive *fout, const TableInfo *tbinfo)
 			appendPQExpBufferStr(query, "BY DEFAULT");
 		appendPQExpBuffer(query, " AS IDENTITY (\n    SEQUENCE NAME %s\n",
 						  fmtQualifiedDumpable(tbinfo));
+
+		/*
+		 * Emit persistence option only if it's different from the owning
+		 * table's.  This avoids using this new syntax unnecessarily.
+		 */
+		if (tbinfo->relpersistence != owning_tab->relpersistence)
+			appendPQExpBuffer(query, "    %s\n",
+							  tbinfo->relpersistence == RELPERSISTENCE_UNLOGGED ?
+							  "UNLOGGED" : "LOGGED");
 	}
 	else
 	{
@@ -17589,15 +17620,7 @@ dumpSequence(Archive *fout, const TableInfo *tbinfo)
 					  seq->cache, (seq->cycled ? "\n    CYCLE" : ""));
 
 	if (tbinfo->is_identity_sequence)
-	{
 		appendPQExpBufferStr(query, "\n);\n");
-		if (tbinfo->relpersistence != owning_tab->relpersistence)
-			appendPQExpBuffer(query,
-							  "ALTER SEQUENCE %s SET %s;\n",
-							  fmtQualifiedDumpable(tbinfo),
-							  tbinfo->relpersistence == RELPERSISTENCE_UNLOGGED ?
-							  "UNLOGGED" : "LOGGED");
-	}
 	else
 		appendPQExpBufferStr(query, ";\n");
 

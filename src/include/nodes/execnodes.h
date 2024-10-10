@@ -132,8 +132,10 @@ typedef struct ExprState
 	bool	   *innermost_domainnull;
 
 	/*
-	 * For expression nodes that support soft errors.  Should be set to NULL
-	 * before calling ExecInitExprRec() if the caller wants errors thrown.
+	 * For expression nodes that support soft errors. Should be set to NULL if
+	 * the caller wants errors to be thrown. Callers that do not want errors
+	 * thrown should set it to a valid ErrorSaveContext before calling
+	 * ExecInitExprRec().
 	 */
 	ErrorSaveContext *escontext;
 } ExprState;
@@ -202,6 +204,7 @@ typedef struct IndexInfo
 	bool		ii_Concurrent;
 	bool		ii_BrokenHotChain;
 	bool		ii_Summarizing;
+	bool		ii_WithoutOverlaps;
 	int			ii_ParallelWorkers;
 	Oid			ii_Am;
 	void	   *ii_AmCache;
@@ -482,6 +485,9 @@ typedef struct ResultRelInfo
 	/* Have the projection and the slots above been initialized? */
 	bool		ri_projectNewInfoValid;
 
+	/* updates do LockTuple() before oldtup read; see README.tuplock */
+	bool		ri_needLockTagTuple;
+
 	/* triggers to be fired, if any */
 	TriggerDesc *ri_TrigDesc;
 
@@ -701,6 +707,11 @@ typedef struct EState
 	struct EPQState *es_epq_active;
 
 	bool		es_use_parallel_mode;	/* can we use parallel workers? */
+
+	int			es_parallel_workers_to_launch;	/* number of workers to
+												 * launch. */
+	int			es_parallel_workers_launched;	/* number of workers actually
+												 * launched. */
 
 	/* The per-query shared memory area to use for parallel execution. */
 	struct dsa_area *es_query_dsa;
@@ -2619,6 +2630,17 @@ typedef struct WindowAggState
 	bool		inRangeAsc;		/* use ASC sort order for in_range tests? */
 	bool		inRangeNullsFirst;	/* nulls sort first for in_range tests? */
 
+	/* fields relating to runconditions */
+	bool		use_pass_through;	/* When false, stop execution when
+									 * runcondition is no longer true.  Else
+									 * just stop evaluating window funcs. */
+	bool		top_window;		/* true if this is the top-most WindowAgg or
+								 * the only WindowAgg in this query level */
+	ExprState  *runcondition;	/* Condition which must remain true otherwise
+								 * execution of the WindowAgg will finish or
+								 * go into pass-through mode.  NULL when there
+								 * is no such condition. */
+
 	/* these fields are used in GROUPS mode: */
 	int64		currentgroup;	/* peer group # of current row in partition */
 	int64		frameheadgroup; /* peer group # of frame head row */
@@ -2631,19 +2653,10 @@ typedef struct WindowAggState
 	MemoryContext curaggcontext;	/* current aggregate's working data */
 	ExprContext *tmpcontext;	/* short-term evaluation context */
 
-	ExprState  *runcondition;	/* Condition which must remain true otherwise
-								 * execution of the WindowAgg will finish or
-								 * go into pass-through mode.  NULL when there
-								 * is no such condition. */
-
-	bool		use_pass_through;	/* When false, stop execution when
-									 * runcondition is no longer true.  Else
-									 * just stop evaluating window funcs. */
-	bool		top_window;		/* true if this is the top-most WindowAgg or
-								 * the only WindowAgg in this query level */
 	bool		all_first;		/* true if the scan is starting */
 	bool		partition_spooled;	/* true if all tuples in current partition
 									 * have been spooled into tuplestore */
+	bool		next_partition; /* true if begin_partition needs to be called */
 	bool		more_partitions;	/* true if there's more partitions after
 									 * this one */
 	bool		framehead_valid;	/* true if frameheadpos is known up to

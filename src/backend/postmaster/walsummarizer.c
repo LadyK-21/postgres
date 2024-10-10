@@ -315,7 +315,7 @@ WalSummarizerMain(char *startup_data, size_t startup_data_len)
 		 * So a really fast retry time doesn't seem to be especially
 		 * beneficial, and it will clutter the logs.
 		 */
-		(void) WaitLatch(MyLatch,
+		(void) WaitLatch(NULL,
 						 WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
 						 10000,
 						 WAIT_EVENT_WAL_SUMMARIZER_ERROR);
@@ -752,9 +752,11 @@ WaitForWalSummarization(XLogRecPtr lsn)
 												current_time) / 1000;
 			ereport(WARNING,
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-					 errmsg("still waiting for WAL summarization through %X/%X after %ld seconds",
-							LSN_FORMAT_ARGS(lsn),
-							elapsed_seconds),
+					 errmsg_plural("still waiting for WAL summarization through %X/%X after %ld second",
+								   "still waiting for WAL summarization through %X/%X after %ld seconds",
+								   elapsed_seconds,
+								   LSN_FORMAT_ARGS(lsn),
+								   elapsed_seconds),
 					 errdetail("Summarization has reached %X/%X on disk and %X/%X in memory.",
 							   LSN_FORMAT_ARGS(summarized_lsn),
 							   LSN_FORMAT_ARGS(pending_lsn))));

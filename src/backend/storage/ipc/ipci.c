@@ -115,8 +115,8 @@ CalculateShmemSize(int *num_semaphores)
 											 sizeof(ShmemIndexEnt)));
 	size = add_size(size, dsm_estimate_size());
 	size = add_size(size, DSMRegistryShmemSize());
-	size = add_size(size, BufferShmemSize());
-	size = add_size(size, LockShmemSize());
+	size = add_size(size, BufferManagerShmemSize());
+	size = add_size(size, LockManagerShmemSize());
 	size = add_size(size, PredicateLockShmemSize());
 	size = add_size(size, ProcGlobalShmemSize());
 	size = add_size(size, XLogPrefetchShmemSize());
@@ -132,7 +132,7 @@ CalculateShmemSize(int *num_semaphores)
 	size = add_size(size, LWLockShmemSize());
 	size = add_size(size, ProcArrayShmemSize());
 	size = add_size(size, BackendStatusShmemSize());
-	size = add_size(size, SInvalShmemSize());
+	size = add_size(size, SharedInvalShmemSize());
 	size = add_size(size, PMSignalShmemSize());
 	size = add_size(size, ProcSignalShmemSize());
 	size = add_size(size, CheckpointerShmemSize());
@@ -177,6 +177,12 @@ AttachSharedMemoryStructs(void)
 	/* InitProcess must've been called already */
 	Assert(MyProc != NULL);
 	Assert(IsUnderPostmaster);
+
+	/*
+	 * In EXEC_BACKEND mode, backends don't inherit the number of fast-path
+	 * groups we calculated before setting the shmem up, so recalculate it.
+	 */
+	InitializeFastPathLocks();
 
 	CreateOrAttachShmemStructs();
 
@@ -286,32 +292,32 @@ CreateOrAttachShmemStructs(void)
 	CommitTsShmemInit();
 	SUBTRANSShmemInit();
 	MultiXactShmemInit();
-	InitBufferPool();
+	BufferManagerShmemInit();
 
 	/*
 	 * Set up lock manager
 	 */
-	InitLocks();
+	LockManagerShmemInit();
 
 	/*
 	 * Set up predicate lock manager
 	 */
-	InitPredicateLocks();
+	PredicateLockShmemInit();
 
 	/*
 	 * Set up process table
 	 */
 	if (!IsUnderPostmaster)
 		InitProcGlobal();
-	CreateSharedProcArray();
-	CreateSharedBackendStatus();
+	ProcArrayShmemInit();
+	BackendStatusShmemInit();
 	TwoPhaseShmemInit();
 	BackgroundWorkerShmemInit();
 
 	/*
 	 * Set up shared-inval messaging
 	 */
-	CreateSharedInvalidationState();
+	SharedInvalShmemInit();
 
 	/*
 	 * Set up interprocess signaling mechanisms

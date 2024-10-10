@@ -1275,27 +1275,7 @@ sendquery_cleanup:
 	}
 
 	/* clean up after extended protocol queries */
-	switch (pset.send_mode)
-	{
-		case PSQL_SEND_EXTENDED_CLOSE:	/* \close */
-			free(pset.stmtName);
-			break;
-		case PSQL_SEND_EXTENDED_PARSE:	/* \parse */
-			free(pset.stmtName);
-			break;
-		case PSQL_SEND_EXTENDED_QUERY_PARAMS:	/* \bind */
-		case PSQL_SEND_EXTENDED_QUERY_PREPARED: /* \bind_named */
-			for (i = 0; i < pset.bind_nparams; i++)
-				free(pset.bind_params[i]);
-			free(pset.bind_params);
-			free(pset.stmtName);
-			pset.bind_params = NULL;
-			break;
-		case PSQL_SEND_QUERY:
-			break;
-	}
-	pset.stmtName = NULL;
-	pset.send_mode = PSQL_SEND_QUERY;
+	clean_extended_state();
 
 	/* reset \gset trigger */
 	if (pset.gset_prefix)
@@ -1715,7 +1695,7 @@ ExecQueryAndProcessResults(const char *query,
 			{
 				/*
 				 * Display the current chunk of results, unless the output
-				 * stream stopped working or we got cancelled.  We skip use of
+				 * stream stopped working or we got canceled.  We skip use of
 				 * PrintQueryResult and go directly to printQuery, so that we
 				 * can pass the correct is_pager value and because we don't
 				 * want PrintQueryStatus to happen yet.  Above, we rejected
@@ -2285,6 +2265,43 @@ uri_prefix_length(const char *connstr)
 		return sizeof(short_uri_designator) - 1;
 
 	return 0;
+}
+
+/*
+ * Reset state related to extended query protocol
+ *
+ * Clean up any state related to bind parameters, statement name and
+ * PSQL_SEND_MODE.  This needs to be called after processing a query or when
+ * running a new meta-command that uses the extended query protocol, like
+ * \parse, \bind, etc.
+ */
+void
+clean_extended_state(void)
+{
+	int			i;
+
+	switch (pset.send_mode)
+	{
+		case PSQL_SEND_EXTENDED_CLOSE:	/* \close */
+			free(pset.stmtName);
+			break;
+		case PSQL_SEND_EXTENDED_PARSE:	/* \parse */
+			free(pset.stmtName);
+			break;
+		case PSQL_SEND_EXTENDED_QUERY_PARAMS:	/* \bind */
+		case PSQL_SEND_EXTENDED_QUERY_PREPARED: /* \bind_named */
+			for (i = 0; i < pset.bind_nparams; i++)
+				free(pset.bind_params[i]);
+			free(pset.bind_params);
+			free(pset.stmtName);
+			pset.bind_params = NULL;
+			break;
+		case PSQL_SEND_QUERY:
+			break;
+	}
+
+	pset.stmtName = NULL;
+	pset.send_mode = PSQL_SEND_QUERY;
 }
 
 /*
