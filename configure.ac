@@ -693,10 +693,10 @@ if test "$enable_profiling" = yes && test "$ac_cv_prog_cc_g" = yes; then
   fi
 fi
 
-# On Solaris, we need this #define to get POSIX-conforming versions
-# of many interfaces (sigwait, getpwuid_r, ...).
+# On Solaris, we need these #defines to get POSIX-conforming versions
+# of many interfaces (sigwait, getpwuid_r, shmdt, ...).
 if test "$PORTNAME" = "solaris"; then
-  CPPFLAGS="$CPPFLAGS -D_POSIX_PTHREAD_SEMANTICS"
+  CPPFLAGS="$CPPFLAGS -D_POSIX_C_SOURCE=200112L -D_POSIX_PTHREAD_SEMANTICS"
 fi
 
 # We already have this in Makefile.win32, but configure needs it too
@@ -1689,15 +1689,6 @@ if test "$ac_cv_sizeof_off_t" -lt 8; then
   if expr $RELSEG_SIZE '*' $blocksize '>=' 2 '*' 1024 '*' 1024; then
     AC_MSG_ERROR([Large file support is not enabled. Segment size cannot be larger than 1GB.])
   fi
-fi
-
-AC_CHECK_SIZEOF([bool], [], [#include <stdbool.h>])
-
-dnl We use <stdbool.h> if bool has size 1 after including it.  Otherwise, c.h
-dnl will fall back to declaring bool as unsigned char.
-if test "$ac_cv_sizeof_bool" = 1; then
-  AC_DEFINE([PG_USE_STDBOOL], 1,
-            [Define to 1 to use <stdbool.h> to define type bool.])
 fi
 
 

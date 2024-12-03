@@ -261,7 +261,9 @@ elif host_system == 'openbsd'
 elif host_system == 'sunos'
   portname = 'solaris'
   export_fmt = '-Wl,-M@0@'
-  cppflags += '-D_POSIX_PTHREAD_SEMANTICS'
+  # We need these #defines to get POSIX-conforming versions
+  # of many interfaces (sigwait, getpwuid_r, shmdt, ...).
+  cppflags += [ '-D_POSIX_C_SOURCE=200112L', '-D_POSIX_PTHREAD_SEMANTICS' ]
 
 elif host_system == 'windows'
   portname = 'win32'
@@ -1752,13 +1754,6 @@ if cc.compiles('''
     ''',
     args: test_c_args)
   cdata.set('HAVE__STATIC_ASSERT', 1)
-endif
-
-
-# We use <stdbool.h> if bool has size 1 after including it.  Otherwise, c.h
-# will fall back to declaring bool as unsigned char.
-if cc.sizeof('bool', prefix: '#include <stdbool.h>', args: test_c_args) == 1
-  cdata.set('PG_USE_STDBOOL', 1)
 endif
 
 
