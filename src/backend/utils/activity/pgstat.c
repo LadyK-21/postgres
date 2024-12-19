@@ -77,6 +77,7 @@
  *
  * Each statistics kind is handled in a dedicated file:
  * - pgstat_archiver.c
+ * - pgstat_backend.c
  * - pgstat_bgwriter.c
  * - pgstat_checkpointer.c
  * - pgstat_database.c
@@ -358,6 +359,22 @@ static const PgStat_KindInfo pgstat_kind_builtin_infos[PGSTAT_KIND_BUILTIN_SIZE]
 		.reset_timestamp_cb = pgstat_subscription_reset_timestamp_cb,
 	},
 
+	[PGSTAT_KIND_BACKEND] = {
+		.name = "backend",
+
+		.fixed_amount = false,
+		.write_to_file = false,
+
+		.accessed_across_databases = true,
+
+		.shared_size = sizeof(PgStatShared_Backend),
+		.shared_data_off = offsetof(PgStatShared_Backend, stats),
+		.shared_data_len = sizeof(((PgStatShared_Backend *) 0)->stats),
+		.pending_size = sizeof(PgStat_BackendPendingIO),
+
+		.flush_pending_cb = pgstat_backend_flush_cb,
+		.reset_timestamp_cb = pgstat_backend_reset_timestamp_cb,
+	},
 
 	/* stats for fixed-numbered (mostly 1) objects */
 
@@ -602,6 +619,10 @@ pgstat_shutdown_hook(int code, Datum arg)
 	Assert(dlist_is_empty(&pgStatPending));
 	dlist_init(&pgStatPending);
 
+	/* drop the backend stats entry */
+	if (!pgstat_drop_entry(PGSTAT_KIND_BACKEND, InvalidOid, MyProcNumber))
+		pgstat_request_entry_refs_gc();
+
 	pgstat_detach_shmem();
 
 #ifdef USE_ASSERT_CHECKING
@@ -768,7 +789,7 @@ pgstat_report_stat(bool force)
 
 	partial_flush = false;
 
-	/* flush database / relation / function / ... stats */
+	/* flush of variable-numbered stats */
 	partial_flush |= pgstat_flush_pending_entries(nowait);
 
 	/* flush of fixed-numbered stats */
@@ -1342,8 +1363,7 @@ pgstat_delete_pending_entry(PgStat_EntryRef *entry_ref)
 }
 
 /*
- * Flush out pending stats for database objects (databases, relations,
- * functions).
+ * Flush out pending variable-numbered stats.
  */
 static bool
 pgstat_flush_pending_entries(bool nowait)
@@ -1655,7 +1675,15 @@ pgstat_write_statsfile(XLogRecPtr redo)
 
 		CHECK_FOR_INTERRUPTS();
 
-		/* we may have some "dropped" entries not yet removed, skip them */
+		/*
+		 * We should not see any "dropped" entries when writing the stats
+		 * file, as all backends and auxiliary processes should have cleaned
+		 * up their references before they terminated.
+		 *
+		 * However, since we are already shutting down, it is not worth
+		 * crashing the server over any potential cleanup issues, so we simply
+		 * skip such entries if encountered.
+		 */
 		Assert(!ps->dropped);
 		if (ps->dropped)
 			continue;

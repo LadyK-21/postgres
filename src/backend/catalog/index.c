@@ -2989,7 +2989,7 @@ index_build(Relation heapRelation,
 
 	/*
 	 * Determine worker process details for parallel CREATE INDEX.  Currently,
-	 * only btree has support for parallel builds.
+	 * only btree and BRIN have support for parallel builds.
 	 *
 	 * Note that planner considers parallel safety for us.
 	 */
@@ -3395,7 +3395,7 @@ validate_index(Oid heapId, Oid indexId, Snapshot snapshot)
 
 	/* ambulkdelete updates progress metrics */
 	(void) index_bulk_delete(&ivinfo, NULL,
-							 validate_index_callback, (void *) &state);
+							 validate_index_callback, &state);
 
 	/* Execute the sort */
 	{
