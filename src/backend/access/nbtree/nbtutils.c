@@ -1813,6 +1813,12 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 				all_required_satisfied = true,
 				all_satisfied = true;
 
+	/*
+	 * Unset so->scanBehind (and so->oppositeDirCheck) in case they're still
+	 * set from back when we dealt with the previous page's high key/finaltup
+	 */
+	so->scanBehind = so->oppositeDirCheck = false;
+
 	if (sktrig_required)
 	{
 		/*
@@ -1820,8 +1826,6 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		 */
 		Assert(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
 											 tupnatts, false, 0, NULL));
-
-		so->scanBehind = so->oppositeDirCheck = false;	/* reset */
 
 		/*
 		 * Required scan key wasn't satisfied, so required arrays will have to
@@ -4886,11 +4890,11 @@ _bt_keep_natts_fast(Relation rel, IndexTuple lastleft, IndexTuple firstright)
 					datum2;
 		bool		isNull1,
 					isNull2;
-		Form_pg_attribute att;
+		CompactAttribute *att;
 
 		datum1 = index_getattr(lastleft, attnum, itupdesc, &isNull1);
 		datum2 = index_getattr(firstright, attnum, itupdesc, &isNull2);
-		att = TupleDescAttr(itupdesc, attnum - 1);
+		att = TupleDescCompactAttr(itupdesc, attnum - 1);
 
 		if (isNull1 != isNull2)
 			break;

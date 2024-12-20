@@ -49,14 +49,15 @@
 #define PGSTAT_KIND_FUNCTION	3	/* per-function statistics */
 #define PGSTAT_KIND_REPLSLOT	4	/* per-slot statistics */
 #define PGSTAT_KIND_SUBSCRIPTION	5	/* per-subscription statistics */
+#define PGSTAT_KIND_BACKEND	6	/* per-backend statistics */
 
 /* stats for fixed-numbered objects */
-#define PGSTAT_KIND_ARCHIVER	6
-#define PGSTAT_KIND_BGWRITER	7
-#define PGSTAT_KIND_CHECKPOINTER	8
-#define PGSTAT_KIND_IO	9
-#define PGSTAT_KIND_SLRU	10
-#define PGSTAT_KIND_WAL	11
+#define PGSTAT_KIND_ARCHIVER	7
+#define PGSTAT_KIND_BGWRITER	8
+#define PGSTAT_KIND_CHECKPOINTER	9
+#define PGSTAT_KIND_IO	10
+#define PGSTAT_KIND_SLRU	11
+#define PGSTAT_KIND_WAL	12
 
 #define PGSTAT_KIND_BUILTIN_MIN PGSTAT_KIND_DATABASE
 #define PGSTAT_KIND_BUILTIN_MAX PGSTAT_KIND_WAL
@@ -128,9 +129,6 @@ typedef int64 PgStat_Counter;
 /* ----------
  * PgStat_FunctionCounts	The actual per-function counts kept by a backend
  *
- * This struct should contain only actual event counters, because we memcmp
- * it against zeroes to detect whether there are any pending stats.
- *
  * Note that the time counters are in instr_time format here.  We convert to
  * microseconds in PgStat_Counter format when flushing out pending statistics.
  * ----------
@@ -172,8 +170,10 @@ typedef struct PgStat_BackendSubEntry
 /* ----------
  * PgStat_TableCounts			The actual per-table counts kept by a backend
  *
- * This struct should contain only actual event counters, because we memcmp
- * it against zeroes to detect whether there are any stats updates to apply.
+ * This struct should contain only actual event counters, because we make use
+ * of pg_memory_is_all_zeros() to detect whether there are any stats updates
+ * to apply.
+ *
  * It is a component of PgStat_TableStatus (within-backend state).
  *
  * Note: for a table, tuples_returned is the number of tuples successfully
@@ -267,7 +267,7 @@ typedef struct PgStat_TableXactStatus
  * ------------------------------------------------------------
  */
 
-#define PGSTAT_FILE_FORMAT_ID	0x01A5BCAF
+#define PGSTAT_FILE_FORMAT_ID	0x01A5BCB0
 
 typedef struct PgStat_ArchiverStats
 {
@@ -282,6 +282,14 @@ typedef struct PgStat_ArchiverStats
 	TimestampTz stat_reset_timestamp;
 } PgStat_ArchiverStats;
 
+/* ---------
+ * PgStat_BgWriterStats			Background Writer statistics
+ *
+ * This struct should contain only actual event counters, because we make use
+ * of pg_memory_is_all_zeros() to detect whether there are any stats updates
+ * to apply.
+ * ---------
+ */
 typedef struct PgStat_BgWriterStats
 {
 	PgStat_Counter buf_written_clean;
@@ -290,6 +298,14 @@ typedef struct PgStat_BgWriterStats
 	TimestampTz stat_reset_timestamp;
 } PgStat_BgWriterStats;
 
+/* --------
+ * PgStat_CheckpointerStats		Checkpoint statistics
+ *
+ * This struct should contain only actual event counters, because we make use
+ * of pg_memory_is_all_zeros() to detect whether there are any stats updates to
+ * apply.
+ * ---------
+ */
 typedef struct PgStat_CheckpointerStats
 {
 	PgStat_Counter num_timed;
@@ -347,12 +363,26 @@ typedef struct PgStat_BktypeIO
 	PgStat_Counter times[IOOBJECT_NUM_TYPES][IOCONTEXT_NUM_TYPES][IOOP_NUM_TYPES];
 } PgStat_BktypeIO;
 
+typedef struct PgStat_PendingIO
+{
+	PgStat_Counter counts[IOOBJECT_NUM_TYPES][IOCONTEXT_NUM_TYPES][IOOP_NUM_TYPES];
+	instr_time	pending_times[IOOBJECT_NUM_TYPES][IOCONTEXT_NUM_TYPES][IOOP_NUM_TYPES];
+} PgStat_PendingIO;
+
 typedef struct PgStat_IO
 {
 	TimestampTz stat_reset_timestamp;
 	PgStat_BktypeIO stats[BACKEND_NUM_TYPES];
 } PgStat_IO;
 
+/* Backend statistics store the same amount of IO data as PGSTAT_KIND_IO */
+typedef PgStat_PendingIO PgStat_BackendPendingIO;
+
+typedef struct PgStat_Backend
+{
+	TimestampTz stat_reset_timestamp;
+	PgStat_BktypeIO stats;
+} PgStat_Backend;
 
 typedef struct PgStat_StatDBEntry
 {
@@ -534,6 +564,13 @@ extern bool pgstat_have_entry(PgStat_Kind kind, Oid dboid, uint64 objid);
 extern void pgstat_report_archiver(const char *xlog, bool failed);
 extern PgStat_ArchiverStats *pgstat_fetch_stat_archiver(void);
 
+/*
+ * Functions in pgstat_backend.c
+ */
+
+extern PgStat_Backend *pgstat_fetch_stat_backend(ProcNumber procNumber);
+extern bool pgstat_tracks_backend_bktype(BackendType bktype);
+extern void pgstat_create_backend(ProcNumber procnum);
 
 /*
  * Functions in pgstat_bgwriter.c

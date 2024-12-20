@@ -454,6 +454,7 @@ CommitTimestampEntry
 CommitTimestampShared
 CommonEntry
 CommonTableExpr
+CompactAttribute
 CompareScalarsContext
 CompiledExprState
 CompositeIOData
@@ -619,6 +620,7 @@ DirectoryMethodFile
 DisableTimeoutParams
 DiscardMode
 DiscardStmt
+DispatchOption
 DistanceValue
 DistinctExpr
 DoState
@@ -2120,6 +2122,7 @@ PgFdwSamplingMethod
 PgFdwScanState
 PgIfAddrCallback
 PgStatShared_Archiver
+PgStatShared_Backend
 PgStatShared_BgWriter
 PgStatShared_Checkpointer
 PgStatShared_Common
@@ -2135,6 +2138,8 @@ PgStatShared_SLRU
 PgStatShared_Subscription
 PgStatShared_Wal
 PgStat_ArchiverStats
+PgStat_Backend
+PgStat_BackendPendingIO
 PgStat_BackendSubEntry
 PgStat_BgWriterStats
 PgStat_BktypeIO
@@ -2611,6 +2616,8 @@ SetOpCmd
 SetOpPath
 SetOpState
 SetOpStatePerGroup
+SetOpStatePerGroupData
+SetOpStatePerInput
 SetOpStrategy
 SetOperation
 SetOperationStmt
@@ -2811,6 +2818,7 @@ TAR_MEMBER
 TBMIterateResult
 TBMIteratingState
 TBMIterator
+TBMPrivateIterator
 TBMSharedIterator
 TBMSharedIteratorState
 TBMStatus
@@ -3665,6 +3673,7 @@ nodeitem
 normal_rand_fctx
 nsphash_hash
 ntile_context
+nullingrel_info
 numeric
 object_access_hook_type
 object_access_hook_type_str
